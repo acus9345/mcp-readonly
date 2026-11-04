@@ -1,0 +1,62 @@
+{
+  "name": "mcp-readonly",
+  "version": "0.1.0",
+  "description": "Make any MCP server read-only with one command: a zero-config stdio proxy that hides and blocks write/destructive tools using annotations, name heuristics and allow/deny rules, and tells you why each tool was blocked.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "read-only",
+    "readonly",
+    "proxy",
+    "security",
+    "guardrails",
+    "ai-agents",
+    "tool-filter",
+    "readOnlyHint",
+    "destructiveHint",
+    "stdio",
+    "cli"
+  ],
+  "author": "acus9345",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "mcp-readonly": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "npm run build && node test/run.js",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "cross-spawn": "7.0.6",
+    "eslint": "^10.14.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1"
+  },
+  "overrides": {
+    "minimatch": "11.0.3"
+  }
+}
