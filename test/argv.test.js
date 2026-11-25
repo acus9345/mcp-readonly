@@ -74,6 +74,14 @@ test('win32: through a .cmd shim (like npx.cmd) arguments still arrive verbatim 
   assert.deepEqual(readdirSync(dir).sort(), ['argv-shim.cmd'], 'cmd.exe ran something');
 });
 
+test('win32: a .cmd shim in a directory containing "=" executes cleanly', { skip: winOnly }, async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ro=eq-')));
+  const shim = join(dir, 'eq-shim.cmd');
+  writeFileSync(shim, `@"${process.execPath}" "${ARGV_SERVER}" %*\r\n`);
+  assert.deepEqual(await argvThroughProxy([shim], dir), NASTY);
+  assert.deepEqual(readdirSync(dir), ['eq-shim.cmd']);
+});
+
 test('win32 review M5/N3: a missing .cmd exits 127; a line break for a .cmd target is one clean error line', { skip: winOnly }, async () => {
   const missing = await run(['--', 'C:\\no such dir\\srv.cmd']);
   assert.equal(missing.code, 127, missing.stderr);

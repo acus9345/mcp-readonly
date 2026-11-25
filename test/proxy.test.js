@@ -194,3 +194,14 @@ test('review: "failed to start server" shows the command name, never its argumen
   assert.doesNotMatch(p.stderr + a.stderr + p.stdout + a.stdout, /SECRET/);
 });
 
+test('tools/list error response is forwarded untouched without logging exposing 0/0 tools', async () => {
+  const errServer =
+    'let b="";process.stdin.on("data",c=>{b+=c;let i;while((i=b.indexOf("\\n"))>=0){const l=b.slice(0,i).trim();b=b.slice(i+1);if(!l)continue;const m=JSON.parse(l);if(m.id===undefined)continue;const out=m.method==="initialize"?{jsonrpc:"2.0",id:m.id,result:{protocolVersion:"2025-06-18",capabilities:{},serverInfo:{name:"no-tools",version:"1"}}}:{jsonrpc:"2.0",id:m.id,error:{code:-32601,message:"Method not found"}};process.stdout.write(JSON.stringify(out)+"\\n");}});';
+  const c = new Client(['--', process.execPath, '-e', errServer]);
+  await c.init();
+  const r = await c.request(1, 'tools/list');
+  assert.equal(r.error.code, -32601);
+  assert.equal(await c.close(), 0);
+  assert.doesNotMatch(c.stderr, /exposing 0\/0 tools/);
+});
+

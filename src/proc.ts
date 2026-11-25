@@ -73,11 +73,11 @@ export function escapeCmdArgument(arg: string, doubleEscape: boolean): string {
   return a;
 }
 
-/** Caret-escape the command path itself (it is not quoted, so spaces become ^ ). */
+/** Caret-escape the command path itself (it is not quoted, so spaces and '=' become ^-escaped). */
 export function escapeCmdCommand(cmd: string): string {
-  // a leading drive colon (C:) is left as is; every other ':' is escaped like in arguments
+  // a leading drive colon (C:) is left as is; every other ':' and '=' is escaped ('=' splits unquoted command tokens)
   const drive = /^[a-zA-Z]:/.exec(cmd)?.[0] ?? '';
-  return drive + cmd.slice(drive.length).replace(META, '^$1');
+  return drive + cmd.slice(drive.length).replace(META, '^$1').replace(/=/g, '^=');
 }
 
 const defaultReadFile = (p: string): string | null => {
@@ -109,12 +109,12 @@ export function resolveWindowsCommand(cmd: string, opts: PlatformOptions = {}): 
   const env = opts.env ?? process.env;
   const isFile = opts.isFile ?? defaultIsFile;
   const w = path.win32;
-  const exts = (envGet(env, 'PATHEXT') ?? DEFAULT_PATHEXT)
+  const exts = (envGet(env, 'PATHEXT') || DEFAULT_PATHEXT)
     .split(';')
     .map((e) => e.trim())
     // only things we know how to start; .js/.vbs/.wsf etc. would go to Windows Script Host
     .filter((e) => RUNNABLE_EXTS.has(e.toLowerCase()));
-  const hasKnownExt = exts.some((e) => e.toLowerCase() === w.extname(cmd).toLowerCase());
+  const hasKnownExt = RUNNABLE_EXTS.has(w.extname(cmd).toLowerCase());
   const candidatesIn = (base: string) => (hasKnownExt ? [base] : exts.map((e) => base + e.toLowerCase()));
   const hasDir = /[\\/]/.test(cmd) || /^[a-zA-Z]:/.test(cmd);
   const dirs = hasDir
@@ -247,7 +247,14 @@ export function spawnServer(
   closed.catch(() => {});
   const killTree = (signal: NodeJS.Signals = 'SIGKILL') => killProcessTree(child, signal, platform, opts.env, spawnFn);
   const wait = (ms: number) =>
-    Promise.race([closed.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+    new Promise<boolean>((resolve) => {
+      if (isClosed) return resolve(true);
+      const t = setTimeout(() => resolve(false), ms);
+      void closed.then(() => {
+        clearTimeout(t);
+        resolve(true);
+      });
+    });
   const stop = async (graceMs: number) => {
     if (!child.stdin.destroyed) child.stdin.end();
     if (!isClosed && !(await wait(graceMs))) {

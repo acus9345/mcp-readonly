@@ -88,7 +88,7 @@ export function runProxy(opts: ProxyOptions): Promise<number> {
     const child = server.child;
     const graceMs = opts.graceMs ?? 3000;
     const toServer = (line: string) => {
-      if (!child.stdin.destroyed) child.stdin.write(line + '\n');
+      if (!child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.write(line + '\n');
     };
 
     type Decision = { kind: 'forward'; m: unknown; rewrite: boolean } | { kind: 'reply'; reply: unknown } | { kind: 'drop' };
@@ -153,6 +153,7 @@ export function runProxy(opts: ProxyOptions): Promise<number> {
     const fromServer = (m: unknown): unknown => {
       if (!isResponse(m) || !listIds.has(idKey(m.id))) return m;
       listIds.delete(idKey(m.id));
+      if ((m as RpcMessage).error !== undefined) return m;
       const f = filterToolsResult((m as RpcMessage).result, policy, !!opts.showBlocked);
       for (const [n, v] of f.verdicts) known.set(n, v);
       const blocked = [...f.verdicts].filter(([, v]) => !v.allowed);
@@ -177,11 +178,27 @@ export function runProxy(opts: ProxyOptions): Promise<number> {
       toClient(r === p.value ? line : JSON.stringify(r));
     });
 
+    const onData = (c: Buffer) => c2s.push(c);
+    const onEnd = () => {
+      c2s.end();
+      void server.stop(graceMs);
+    };
+    // The server runs in its own process group (POSIX), so terminal signals must be forwarded to the group.
+    const forward = (sig: NodeJS.Signals) => () => {
+      server.killTree(sig);
+      void server.stop(graceMs);
+    };
+    const onInt = forward('SIGINT');
+    const onTerm = forward('SIGTERM');
+
     let done = false;
     const finish = (code: number) => {
       if (done) return;
       done = true;
       input.removeListener('data', onData);
+      input.removeListener('end', onEnd);
+      process.removeListener('SIGINT', onInt);
+      process.removeListener('SIGTERM', onTerm);
       if ('pause' in input) input.pause();
       if (output === process.stdout) output.write('', () => resolve(code));
       else resolve(code);
@@ -193,26 +210,13 @@ export function runProxy(opts: ProxyOptions): Promise<number> {
     child.stdin.on('error', () => {
       /* server went away; its exit is reported by "close" */
     });
-    const onData = (c: Buffer) => c2s.push(c);
     input.on('data', onData);
-    input.on('end', () => {
-      c2s.end();
-      void server.stop(graceMs);
-    });
+    input.on('end', onEnd);
     child.stdout.on('data', (c: Buffer) => s2c.push(c));
     child.stdout.on('end', () => s2c.end());
-    // The server runs in its own process group (POSIX), so terminal signals must be forwarded to the group.
-    const forward = (sig: NodeJS.Signals) => () => {
-      server.killTree(sig);
-      void server.stop(graceMs);
-    };
-    const onInt = forward('SIGINT');
-    const onTerm = forward('SIGTERM');
     process.once('SIGINT', onInt);
     process.once('SIGTERM', onTerm);
     void server.closed.then(({ code, signal }) => {
-      process.removeListener('SIGINT', onInt);
-      process.removeListener('SIGTERM', onTerm);
       s2c.end();
       finish(exitCodeFor(code, signal));
     });

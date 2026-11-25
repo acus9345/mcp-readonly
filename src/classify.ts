@@ -133,11 +133,12 @@ export function globMatch(pattern: string, name: string): boolean {
   const re = new RegExp(
     '^' +
       pattern
+        .replace(/\*+/g, '*')
         .split('')
         .map((ch) => (ch === '*' ? '.*' : ch === '?' ? '.' : ch.replace(/[.+^${}()|[\]\\]/g, '\\$&')))
         .join('') +
       '$',
-    'i',
+    'is',
   );
   return re.test(name);
 }

@@ -3,6 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { escapeCmdArgument, escapeCmdCommand, planSpawn, resolveWindowsCommand, spawnServer, killProcessTree, SpawnError, forwardsAllArgs, startErrorMessage } from '../dist/proc.js';
 
 const require = createRequire(import.meta.url);
@@ -104,6 +107,7 @@ test('escapeCmdArgument matches known cmd.exe escaping cases', () => {
   assert.equal(escapeCmdArgument('', false), r`^"^"`);
   assert.equal(escapeCmdArgument('!x!', false), r`^"^!x^!^"`);
   assert.equal(escapeCmdCommand('C:\\Program Files\\nodejs\\npx.cmd'), r`C:\Program^ Files\nodejs\npx.cmd`);
+  assert.equal(escapeCmdCommand('C:\\a=b\\npx.cmd'), r`C:\a^=b\npx.cmd`);
 });
 
 test('escapeCmdArgument agrees with cross-spawn on every nasty argument', () => {
@@ -262,6 +266,13 @@ test('win32: PATHEXT entries other than .com/.exe/.bat/.cmd are ignored', () => 
   assert.equal(resolveWindowsCommand('server', { ...win, env, isFile }), null);
 });
 
+test('win32: explicit runnable extension resolves even when omitted from PATHEXT, and empty PATHEXT uses defaults', () => {
+  const noBat = { ...WIN_ENV, PATHEXT: '.EXE;.CMD' };
+  assert.equal(resolveWindowsCommand('C:\\tools\\run.BAT', { ...win, env: noBat }), 'C:\\tools\\run.BAT');
+  const emptyExt = { ...WIN_ENV, PATHEXT: '' };
+  assert.equal(resolveWindowsCommand('npx', { ...win, env: emptyExt }), 'C:\\Program Files\\nodejs\\npx.cmd');
+});
+
 test('win32: on a case-insensitive file system the resolver returns the as-given / lowercase spelling', () => {
   // NTFS: statSync("npx.CMD") succeeds for npx.cmd, so the spelling we try first is what we return
   const files = new Set([...WIN_FILES].map((f) => f.toLowerCase()));
@@ -350,4 +361,18 @@ test('review: start errors never echo argument values (API keys), only the comma
   const enoent = Object.assign(new Error(`spawn nope ENOENT ${secret}`), { code: 'ENOENT' });
   assert.equal(startErrorMessage(['nope', secret], enoent), 'failed to start server "nope": ENOENT (command not found)');
   assert.doesNotMatch(startErrorMessage(['run.bat', secret], new SpawnError('x', 'EINVAL')), /SECRET/);
+});
+
+test('spawnServer.stop clears its grace timer when the child exits early (no dangling event-loop timer)', () => {
+  const t0 = Date.now();
+  const procUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'proc.js')).href;
+  const script = `
+    import { spawnServer } from ${JSON.stringify(procUrl)};
+    const s = spawnServer([process.execPath, '-e', 'process.stdin.resume(); process.stdin.on("end", () => process.exit(0));'], 'pipe');
+    await s.stop(10_000);
+    await s.closed;
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(Date.now() - t0 < 2000, `process lingered for ${Date.now() - t0} ms`);
 });

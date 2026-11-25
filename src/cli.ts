@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { defaultPolicy, type Policy } from './classify.js';
 import { audit, AuditError, formatAudit } from './audit.js';
+import { stripBom } from './framing.js';
+import { isObject } from './jsonrpc.js';
 import { runProxy } from './proxy.js';
 
 const require = createRequire(import.meta.url);
@@ -101,13 +103,18 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     const flag = eq > 0 ? a.slice(0, eq) : a;
     const inline = eq > 0 ? a.slice(eq + 1) : undefined;
     const val = (name: string) => inline ?? value(name);
+    const noVal = () => {
+      if (inline !== undefined) throw new UsageError(`${flag} does not take a value`);
+    };
     switch (flag) {
       case '-h':
       case '--help':
+        noVal();
         p.command = 'help';
         return p;
       case '-v':
       case '--version':
+        noVal();
         p.command = 'version';
         return p;
       case '--allow':
@@ -123,26 +130,32 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
         break;
       }
       case '--distrust-annotations':
+        noVal();
         p.policy.distrustAnnotations = true;
         break;
       case '--show-blocked':
+        noVal();
         p.showBlocked = true;
         break;
       case '--quiet':
+        noVal();
         p.quiet = true;
         break;
       case '--json':
+        noVal();
         p.json = true;
         break;
       case '--grace': {
-        const n = Number(val(flag));
-        if (!Number.isFinite(n) || n < 0) throw new UsageError('--grace must be a number of ms (0 or more)');
+        const raw = val(flag);
+        const n = Number(raw);
+        if (raw.trim() === '' || !Number.isFinite(n) || n < 0) throw new UsageError('--grace must be a number of ms (0 or more)');
         p.grace = n;
         break;
       }
       case '--timeout': {
-        const n = Number(val(flag));
-        if (!Number.isFinite(n) || n <= 0) throw new UsageError('--timeout must be a positive number of ms');
+        const raw = val(flag);
+        const n = Number(raw);
+        if (raw.trim() === '' || !Number.isFinite(n) || n <= 0) throw new UsageError('--timeout must be a positive number of ms');
         p.timeout = n;
         break;
       }
@@ -158,12 +171,14 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 }
 
 function applyConfig(p: Parsed, file: string): void {
-  let c: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    c = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    parsed = JSON.parse(stripBom(readFileSync(file, 'utf8')));
   } catch (e) {
     throw new UsageError(`cannot read config ${file}: ${(e as Error).message}`);
   }
+  if (!isObject(parsed)) throw new UsageError(`config ${file} must be a JSON object`);
+  const c = parsed;
   const strings = (k: string): string[] => {
     const v = c[k];
     if (v === undefined) return [];
@@ -176,8 +191,14 @@ function applyConfig(p: Parsed, file: string): void {
     if (c.unknown !== 'block' && c.unknown !== 'allow') throw new UsageError('config "unknown" must be "block" or "allow"');
     p.policy.unknown = c.unknown;
   }
-  if (c.distrustAnnotations === true) p.policy.distrustAnnotations = true;
-  if (c.showBlocked === true) p.showBlocked = true;
+  if (c.distrustAnnotations !== undefined) {
+    if (typeof c.distrustAnnotations !== 'boolean') throw new UsageError('config "distrustAnnotations" must be a boolean');
+    p.policy.distrustAnnotations = c.distrustAnnotations;
+  }
+  if (c.showBlocked !== undefined) {
+    if (typeof c.showBlocked !== 'boolean') throw new UsageError('config "showBlocked" must be a boolean');
+    p.showBlocked = c.showBlocked;
+  }
 }
 
 async function main(): Promise<number> {
@@ -221,10 +242,26 @@ async function main(): Promise<number> {
   });
 }
 
+function flushStream(s: NodeJS.WriteStream): Promise<void> {
+  if (s.destroyed || !s.writable) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      s.removeListener('error', done);
+      resolve();
+    };
+    s.once('error', done);
+    s.write('', done);
+  });
+}
+
 main().then(
-  (code) => process.exit(code),
-  (err: unknown) => {
+  async (code) => {
+    await Promise.all([flushStream(process.stdout), flushStream(process.stderr)]);
+    process.exit(code);
+  },
+  async (err: unknown) => {
     process.stderr.write(`mcp-readonly: ${(err as Error)?.stack ?? String(err)}\n`);
+    await flushStream(process.stderr);
     process.exit(2);
   },
 );

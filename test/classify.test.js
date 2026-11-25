@@ -208,6 +208,7 @@ test('unclassified tools fail closed unless --unknown allow', () => {
 test('allow/deny globs: deny wins over allow, allow wins over annotations', () => {
   assert.equal(globMatch('delete_*', 'DELETE_note'), true);
   assert.equal(globMatch('get_?', 'get_ab'), false);
+  assert.equal(globMatch('****************************a', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbb'), false);
   assert.equal(v({ name: 'delete_note', annotations: { destructiveHint: true } }, p({ allow: ['delete_*'] })).allowed, true);
   assert.equal(v('get_note', p({ deny: ['get_*'] })).allowed, false);
   assert.equal(v('get_note', p({ deny: ['get_*'], allow: ['get_note'] })).source, 'deny');
