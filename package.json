@@ -1,6 +1,6 @@
 {
   "name": "mcp-readonly",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Make any MCP server read-only with one command: a zero-config stdio proxy that hides and blocks write/destructive tools using annotations, name heuristics and allow/deny rules, and tells you why each tool was blocked.",
   "keywords": [
     "mcp",
